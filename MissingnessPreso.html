@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Missing data:</title>
+    <meta charset="utf-8">
+    <meta name="author" content="John Ormerod" />
+    <link href="libs/remark-css/shinobi.css" rel="stylesheet" />
+    <link href="libs/remark-css/ninjutsu.css" rel="stylesheet" />
+    <link rel="stylesheet" href="assets\sydney-fonts.css" type="text/css" />
+    <link rel="stylesheet" href="assets\sydney.css" type="text/css" />
+    <link rel="stylesheet" href="assets\custom.css" type="text/css" />
+  </head>
+  <body>
+    <textarea id="source">
+
+
+
+
+
+
+
+
+class: split-50 with-border white hide-slide-number bg-black
+background-image: url(assets/title-image2.jpg)
+background-size: cover
+
+.column.outline_text[.content[
+&lt;br&gt;&lt;br&gt;&lt;br&gt;
+
+# .brand-yellow[Missing data: ]
+## Seeing a spider isn't the problem. It becomes a problem when it disappears.
+
+.bottom_abs.width100.outline_text[
+## Lecturer: .brand-yellow[John Ormerod]
+
+### 20/03/2019
+
+]]]
+
+.column.shade_black[.content[
+# &lt;u&gt;Today you will learn&lt;/u&gt;
+
+* Visualizing missing data - naniar
+
+* Simple imputation - simputation
+
+* Multiple imputation - mice
+
+]]
+
+
+
+
+---
+
+&lt;center&gt;
+&lt;img src="spider.jpg" style="width:50%"&gt;
+&lt;/center&gt;
+
+
+---
+
+# Missing data
+
+Missing data is a pervasive issue in the analysis of data and occurs in a
+wide variety of contexts. Despite this pervasiveness, it is not often given
+much attention in many undergraduate Statistics and Data Science degrees.
+
+Part of the reason is due to the complexity of the topic, the additional
+layer of terminology, and the common fear associated with 
+
+"if you are not doing it right then you should steer clear of it" 
+
+as a way of avoiding criticism. 
+
+This doesn't help.
+
+---
+
+# Examples of missing data
+
+Missing data occurs in models including, but not limited to:
+
+* Regression;
+
+* Survey data;
+
+* Survival data;
+
+* Longitudinal data; and
+
+* Time series data.
+
+How missing data can be handled depends relatively heavily on the
+context the data was collected and which model is entertained. 
+
+The methods for  handling missing data in one context may not make 
+much sense in another context. 
+
+---
+
+# Our focus
+
+Today we will focus on the situation where covariates are missing
+in a regression context. 
+
+
+Our main assumptions are:
+
+* (Conditional) independent identically distributed samples.
+
+* The missing data mechanism is ignorable (see next slide).
+
+---
+
+# Types of missing data
+
+
+&lt;center&gt;
+&lt;img src="missing.png" style="width:50%"&gt;
+&lt;/center&gt;
+
+Theory: If the missing data mechanism is missing completely at random (MCAR)
+or missing at random (MAR) then the missing data mechanism is ignorable
+(so we don't need to model it).
+
+---
+
+# Case study: Pima-Indians diabetes
+
+The Pima-Indians diabetes (PID) dataset is an immensely popular dataset
+originally collected by the National Institute of Diabetes and Digestive and Kidney Diseases.
+This dataset is part of the _mlbench_ package in _R_.
+
+* pregnant- Number of times pregnant (count);
+
+* glucose - Plasma glucose concentration (glucose tolerance test) (continuous);
+
+* pressure - Diastolic blood pressure (mm Hg) (continuous);
+
+* triceps	- Triceps skin fold thickness (mm) (continuous);
+
+* insulin	- 2-Hour serum insulin (mu U/ml) (continuous);
+
+* mass - Body mass index (weight in kg/(height in m)\^2) (continuous);
+
+* pedigree - Diabetes pedigree function (continuous values);
+
+* age	- Age (years) (count); and
+
+* diabetes - a class variable (test for diabetes) with values "pos" and "neg" (binary).
+
+---
+
+layout: false
+class: split-40 
+
+.column.bg-brand-red.white[.content[
+
+
+```r
+library(mlbench)
+data(PimaIndiansDiabetes)
+
+g &lt;- PimaIndiansDiabetes %&gt;%
+  keep(is.numeric) %&gt;% 
+  gather() %&gt;% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram() +
+    theme_bw(base_size = 22)
+```
+
+]]
+
+
+.column[.content[
+
+&lt;img src="MissingnessPreso_files/figure-html/unnamed-chunk-4-1.png" style="display: block; margin: auto;" /&gt;
+]]
+
+---
+
+# Implicit missingness
+
+In the previous slide the boxplots revealed implicit missing values in 
+__glucose__, __pressure__, __triceps__, __insulin__, and __mass__ 
+(since they can't be zero!). So we convert these explicitly to missing values.
+
+
+```r
+tib &lt;- as.tibble(PimaIndiansDiabetes)
+is.zero &lt;- function(x) { return(x==0); }
+
+# Replace implicit missing values with NAs
+dat &lt;- tib %&gt;%
+  mutate_at(which(colnames(tib)%in%c("glucose","pressure","triceps","insulin","mass")),
+            funs(replace(., is.zero(.), NA)))
+```
+            
+---
+
+# Implicit missingness
+
+Later some of the methods we will look at will assume that 
+the missing covariates are normally distributed.
+
+Most of the covariates are right skewed.
+
+So we will convert these to log-scale so this assumption closer
+to being satisfied.
+
+
+```r
+varNames &lt;- colnames(tib)
+logTransVars &lt;- c("pregnant","glucose","insulin","mass","pedigree","age")
+
+dat &lt;- dat %&gt;%
+  mutate_at(which(varNames%in%logTransVars),
+            funs(log(1 + .))) %&gt;%
+  rename( 
+    log1p_pregnant=pregnant,
+    log1p_glucose=glucose,
+    log1p_insulin=insulin,
+    log1p_mass=mass,
+    log1p_pedigree=pedigree,
+    log1p_age=age
+  )
+```
+
+
+---
+
+# Summarising statistics
+
+
+```r
+library(naniar)
+library(knitr)
+kable(miss_var_summary(dat),digits=2, format = "html")
+```
+
+&lt;table&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:left;"&gt; variable &lt;/th&gt;
+   &lt;th style="text-align:right;"&gt; n_miss &lt;/th&gt;
+   &lt;th style="text-align:right;"&gt; pct_miss &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; log1p_insulin &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 374 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 48.70 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; triceps &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 227 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 29.56 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; pressure &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 35 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 4.56 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; log1p_mass &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 11 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 1.43 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; log1p_glucose &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 5 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.65 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; log1p_pregnant &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.00 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; log1p_pedigree &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.00 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; log1p_age &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.00 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; diabetes &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.00 &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+---
+
+# Visualizing relative amounts of missingness
+
+
+```r
+gg_miss_var(dat)
+```
+
+&lt;img src="MissingnessPreso_files/figure-html/plot missingness-1.png" style="display: block; margin: auto;" /&gt;
+
+---
+
+# Visualizing patterns and extent of missingess 
+
+
+```r
+vis_miss(dat)
+```
+
+&lt;img src="MissingnessPreso_files/figure-html/pattern missingness-1.png" style="display: block; margin: auto;" /&gt;
+
+---
+
+# Visualizing combinations of missingness
+
+
+```r
+gg_miss_upset(dat,text.scale = 2)
+```
+
+&lt;img src="MissingnessPreso_files/figure-html/upset missingness-1.png" style="display: block; margin: auto;" /&gt;
+
+---
+
+# The package nanair also has nice functions for tibbles - as_shadow
+
+
+```r
+dat_shadow &lt;- as_shadow(dat)
+dat_shadow
+# A tibble: 768 x 9
+   log1p_pregnant_~ log1p_glucose_NA pressure_NA triceps_NA
+   &lt;fct&gt;            &lt;fct&gt;            &lt;fct&gt;       &lt;fct&gt;     
+ 1 !NA              !NA              !NA         !NA       
+ 2 !NA              !NA              !NA         !NA       
+ 3 !NA              !NA              !NA         NA        
+ 4 !NA              !NA              !NA         !NA       
+ 5 !NA              !NA              !NA         !NA       
+ 6 !NA              !NA              !NA         NA        
+ 7 !NA              !NA              !NA         !NA       
+ 8 !NA              !NA              NA          NA        
+ 9 !NA              !NA              !NA         !NA       
+10 !NA              !NA              !NA         NA        
+# ... with 758 more rows, and 5 more variables: log1p_insulin_NA &lt;fct&gt;,
+#   log1p_mass_NA &lt;fct&gt;, log1p_pedigree_NA &lt;fct&gt;, log1p_age_NA &lt;fct&gt;,
+#   diabetes_NA &lt;fct&gt;
+```
+
+---
+  
+# The package nanair also has nice functions for tibbles - bind_shadow  
+
+
+```r
+shadow_dat &lt;- dat  %&gt;%
+  bind_shadow()
+shadow_dat
+# A tibble: 768 x 18
+   log1p_pregnant log1p_glucose pressure triceps log1p_insulin log1p_mass
+            &lt;dbl&gt;         &lt;dbl&gt;    &lt;dbl&gt;   &lt;dbl&gt;         &lt;dbl&gt;      &lt;dbl&gt;
+ 1          1.95           5.00       72      35         NA          3.54
+ 2          0.693          4.45       66      29         NA          3.32
+ 3          2.20           5.21       64      NA         NA          3.19
+ 4          0.693          4.50       66      23          4.55       3.37
+ 5          0              4.93       40      35          5.13       3.79
+ 6          1.79           4.76       74      NA         NA          3.28
+ 7          1.39           4.37       50      32          4.49       3.47
+ 8          2.40           4.75       NA      NA         NA          3.59
+ 9          1.10           5.29       70      45          6.30       3.45
+10          2.20           4.84       96      NA         NA         NA   
+# ... with 758 more rows, and 12 more variables: log1p_pedigree &lt;dbl&gt;,
+#   log1p_age &lt;dbl&gt;, diabetes &lt;fct&gt;, log1p_pregnant_NA &lt;fct&gt;,
+#   log1p_glucose_NA &lt;fct&gt;, pressure_NA &lt;fct&gt;, triceps_NA &lt;fct&gt;,
+#   log1p_insulin_NA &lt;fct&gt;, log1p_mass_NA &lt;fct&gt;, log1p_pedigree_NA &lt;fct&gt;,
+#   log1p_age_NA &lt;fct&gt;, diabetes_NA &lt;fct&gt;
+```
+
+---
+
+# Deletion methods
+
+The most straightforward approach to dealing with missing data is to remove combinations of 
+rows and/or columns to arrive at a complete dataset. The most common approach is to perform
+
+* a complete case analysis (also called listwise deletion) where only samples containing 
+complete information is used. 
+
+* The second most common approach is called an available case
+analysis (also called pairwise deletion) where a subset of variables are deleted first 
+before removing all samples that contain missing values.
+
+Both these approaches assume MCAR or MAR.
+
+---
+
+# Complete and available case fits
+
+
+```r
+dat_complete &lt;- dat %&gt;%
+  drop_na()  
+
+res.glm1 &lt;- glm(diabetes~.,data=dat_complete,family=binomial)
+res.glm2 &lt;- glm(diabetes~.-triceps-log1p_insulin,
+                data=dat_complete,family=binomial)
+
+dat_available1 &lt;- dat %&gt;%
+  select(-triceps,-log1p_insulin) %&gt;%
+  drop_na()  
+
+dat_available2 &lt;- dat %&gt;%
+  select(-triceps,-log1p_insulin,-pressure) %&gt;%
+  drop_na()
+
+res.glm3 &lt;- glm(diabetes~.,data=dat_available1,family=binomial)
+res.glm4 &lt;- glm(diabetes~.,data=dat_available2,family=binomial)
+```
+
+---
+
+# Comparing complete and available case analyses
+
+
+```r
+library(stargazer)
+stargazer(res.glm1, res.glm2, res.glm3, res.glm4,  
+          title="Results", align=TRUE, type="html", style = "ajs",
+          notes="PID fit using complete case and available case analysis")
+```
+
+
+&lt;table style="text-align:center"&gt;&lt;caption&gt;&lt;strong&gt;Results&lt;/strong&gt;&lt;/caption&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td colspan="5" style="border-bottom: 1px solid black"&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td colspan="4"&gt;DIABETES&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;2&lt;/td&gt;&lt;td&gt;3&lt;/td&gt;&lt;td&gt;4&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td colspan="5" style="border-bottom: 1px solid black"&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_pregnant&lt;/td&gt;&lt;td&gt;.087&lt;/td&gt;&lt;td&gt;.086&lt;/td&gt;&lt;td&gt;.366&lt;sup&gt;*&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;.346&lt;sup&gt;*&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.240)&lt;/td&gt;&lt;td&gt;(.240)&lt;/td&gt;&lt;td&gt;(.153)&lt;/td&gt;&lt;td&gt;(.146)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_glucose&lt;/td&gt;&lt;td&gt;4.547&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;4.634&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;4.476&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;4.548&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.768)&lt;/td&gt;&lt;td&gt;(.657)&lt;/td&gt;&lt;td&gt;(.469)&lt;/td&gt;&lt;td&gt;(.460)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;pressure&lt;/td&gt;&lt;td&gt;-.003&lt;/td&gt;&lt;td&gt;-.003&lt;/td&gt;&lt;td&gt;-.011&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.012)&lt;/td&gt;&lt;td&gt;(.012)&lt;/td&gt;&lt;td&gt;(.009)&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;triceps&lt;/td&gt;&lt;td&gt;.005&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.017)&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_insulin&lt;/td&gt;&lt;td&gt;.057&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.265)&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_mass&lt;/td&gt;&lt;td&gt;2.739&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;2.957&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;3.456&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;3.296&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(1.008)&lt;/td&gt;&lt;td&gt;(.787)&lt;/td&gt;&lt;td&gt;(.560)&lt;/td&gt;&lt;td&gt;(.520)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_pedigree&lt;/td&gt;&lt;td&gt;1.928&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.954&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.709&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.622&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.703)&lt;/td&gt;&lt;td&gt;(.700)&lt;/td&gt;&lt;td&gt;(.499)&lt;/td&gt;&lt;td&gt;(.488)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_age&lt;/td&gt;&lt;td&gt;2.054&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;2.082&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.159&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;.922&lt;sup&gt;*&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.671)&lt;/td&gt;&lt;td&gt;(.665)&lt;/td&gt;&lt;td&gt;(.388)&lt;/td&gt;&lt;td&gt;(.361)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;Constant&lt;/td&gt;&lt;td&gt;-40.554&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;-41.403&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;-38.793&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;-38.434&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(5.148)&lt;/td&gt;&lt;td&gt;(4.609)&lt;/td&gt;&lt;td&gt;(3.208)&lt;/td&gt;&lt;td&gt;(3.068)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;Observations&lt;/td&gt;&lt;td&gt;392&lt;/td&gt;&lt;td&gt;392&lt;/td&gt;&lt;td&gt;724&lt;/td&gt;&lt;td&gt;752&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;Log Likelihood&lt;/td&gt;&lt;td&gt;-170.188&lt;/td&gt;&lt;td&gt;-170.253&lt;/td&gt;&lt;td&gt;-332.169&lt;/td&gt;&lt;td&gt;-347.874&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;Akaike Inf. Crit.&lt;/td&gt;&lt;td&gt;358.375&lt;/td&gt;&lt;td&gt;354.507&lt;/td&gt;&lt;td&gt;678.338&lt;/td&gt;&lt;td&gt;707.749&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td colspan="5" style="border-bottom: 1px solid black"&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;em&gt;Notes:&lt;/em&gt;&lt;/td&gt;&lt;td colspan="4" style="text-align:left"&gt;&lt;sup&gt;*&lt;/sup&gt;P &lt; .05&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td colspan="4" style="text-align:left"&gt;&lt;sup&gt;**&lt;/sup&gt;P &lt; .01&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td colspan="4" style="text-align:left"&gt;&lt;sup&gt;***&lt;/sup&gt;P &lt; .001&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td colspan="4" style="text-align:left"&gt;PID fit using complete case and available case analysis&lt;/td&gt;&lt;/tr&gt;
+&lt;/table&gt;
+
+
+---
+
+# Single imputation methods
+
+* The next step is to fill in the missing values with "realistic"
+values. 
+
+* This should be done with some care...
+
+* Suppose we fill in all missing values for a particular covariate 
+with the mean of the values in that covariate then the variance
+of that covariate becomes artificially smaller.
+
+* This means inferences based on these methods will be, in general, unreliable.
+
+* However, if the goal is prediction then single imputation methods
+can still be reasonable.
+
+---
+ 
+
+# Simple imputation methods
+
+We will consider a number of methods now that replace all missing values
+with a single value. 
+
+* Mean/Median substitution.
+* Regression imputation.
+  - Linear regression models.
+  - Robust regression models.
+  - Penalized regression.
+* Machine learning imputation
+  - K-nearest neighbours.
+  - Cart imputation
+  - Random forest imputation.
+
+There is also hotdeck imputation (which I will not cover here)
+and expectation maximization.
+
+---
+
+# Simple imputation methods
+ 
+
+|function     |method                  |library         |
+|:------------|:-----------------------|:---------------|
+|impute_rlm   |M-estimation            |MASS            |
+|impute_en    |ridge/elasticnet/lasso  |glmnet          |
+|impute_cart  |CART                    |rpart           |
+|impute_rf    |random forest           |randomForest    |
+|impute_rhd   |random hot deck         |VIM (optional)  |
+|impute_shd   |sequential hot deck     |VIM (optional)  |
+|impute_knn   |k nearest neighbours    |VIM (optional)  |
+|impute_mf    |missForest              |missForest      |
+|impute_em    |mv-normal               |norm            |
+
+The general syntax is and the formula is of the form
+
+```r
+impute_&lt;model&gt;(data, formula, [model-specific options])
+
+IMPUTED ~ MODEL_SPECIFICATION [ | GROUPING ]
+```
+
+---
+
+# Mean/Median substitution
+
+
+```r
+suppressPackageStartupMessages(library(simputation))
+
+# Impute all missing values by their median value
+dat_imp1 &lt;- dat %&gt;%
+  impute_lm(log1p_glucose ~ 1) %&gt;%
+  impute_lm(pressure ~ 1) %&gt;% 
+  impute_lm(triceps ~ 1) %&gt;%
+  impute_lm(log1p_insulin ~ 1) %&gt;%
+  impute_lm(log1p_mass ~ 1)
+
+# Impute all missing values by their median value
+dat_imp2 &lt;- dat %&gt;%
+  impute_median(log1p_glucose ~ 1) %&gt;%
+  impute_median(pressure ~ 1) %&gt;% 
+  impute_median(triceps ~ 1) %&gt;%
+  impute_median(log1p_insulin ~ 1) %&gt;%
+  impute_median(log1p_mass ~ 1)
+
+res.glm5 &lt;- glm(diabetes~.,data=dat_imp1,family=binomial)
+res.glm6 &lt;- glm(diabetes~.,data=dat_imp2,family=binomial)
+```
+
+---
+
+# Mean substitution with added noise
+
+
+```r
+# Impute all missing values by their mean value add normal noise
+dat_imp3 &lt;- dat %&gt;%
+  impute_lm(log1p_glucose ~ 1, add_residual="normal") %&gt;%
+  impute_lm(pressure ~ 1, add_residual="normal") %&gt;% 
+  impute_lm(triceps ~ 1, add_residual="normal") %&gt;%
+  impute_lm(log1p_insulin ~ 1, add_residual="normal") %&gt;%
+  impute_lm(log1p_mass ~ 1, add_residual="normal")
+
+# Impute all missing values by their mean value add residuals to result
+dat_imp4 &lt;- dat %&gt;%
+  impute_median(log1p_glucose ~ 1, add_residual="observed") %&gt;%
+  impute_median(pressure ~ 1, add_residual="observed") %&gt;% 
+  impute_median(triceps ~ 1, add_residual="observed") %&gt;%
+  impute_median(log1p_insulin ~ 1, add_residual="observed") %&gt;%
+  impute_median(log1p_mass ~ 1, add_residual="observed")
+
+res.glm7 &lt;- glm(diabetes~.,data=dat_imp3,family=binomial)
+res.glm8 &lt;- glm(diabetes~.,data=dat_imp4,family=binomial)
+```
+
+---
+
+
+```r
+stargazer(res.glm3, res.glm5, res.glm6, res.glm7, res.glm7,
+          title="Results", align=TRUE, type="html", style = "ajs",
+          notes="PID fit using complete case and single imputation analysis")
+```
+
+
+&lt;table style="text-align:center"&gt;&lt;caption&gt;&lt;strong&gt;Results&lt;/strong&gt;&lt;/caption&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td colspan="6" style="border-bottom: 1px solid black"&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td colspan="5"&gt;DIABETES&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;2&lt;/td&gt;&lt;td&gt;3&lt;/td&gt;&lt;td&gt;4&lt;/td&gt;&lt;td&gt;5&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td colspan="6" style="border-bottom: 1px solid black"&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_pregnant&lt;/td&gt;&lt;td&gt;.366&lt;sup&gt;*&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;.379&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;.379&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;.385&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;.385&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.153)&lt;/td&gt;&lt;td&gt;(.146)&lt;/td&gt;&lt;td&gt;(.146)&lt;/td&gt;&lt;td&gt;(.147)&lt;/td&gt;&lt;td&gt;(.147)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_glucose&lt;/td&gt;&lt;td&gt;4.476&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;4.631&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;4.624&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;4.658&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;4.658&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.469)&lt;/td&gt;&lt;td&gt;(.505)&lt;/td&gt;&lt;td&gt;(.505)&lt;/td&gt;&lt;td&gt;(.480)&lt;/td&gt;&lt;td&gt;(.480)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;pressure&lt;/td&gt;&lt;td&gt;-.011&lt;/td&gt;&lt;td&gt;-.011&lt;/td&gt;&lt;td&gt;-.011&lt;/td&gt;&lt;td&gt;-.009&lt;/td&gt;&lt;td&gt;-.009&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.009)&lt;/td&gt;&lt;td&gt;(.009)&lt;/td&gt;&lt;td&gt;(.009)&lt;/td&gt;&lt;td&gt;(.008)&lt;/td&gt;&lt;td&gt;(.008)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;triceps&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;-0.000&lt;/td&gt;&lt;td&gt;-0.000&lt;/td&gt;&lt;td&gt;.006&lt;/td&gt;&lt;td&gt;.006&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;(.013)&lt;/td&gt;&lt;td&gt;(.013)&lt;/td&gt;&lt;td&gt;(.011)&lt;/td&gt;&lt;td&gt;(.011)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_insulin&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;-.024&lt;/td&gt;&lt;td&gt;-.014&lt;/td&gt;&lt;td&gt;-.146&lt;/td&gt;&lt;td&gt;-.146&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;(.228)&lt;/td&gt;&lt;td&gt;(.229)&lt;/td&gt;&lt;td&gt;(.148)&lt;/td&gt;&lt;td&gt;(.148)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_mass&lt;/td&gt;&lt;td&gt;3.456&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;3.574&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;3.577&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;3.438&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;3.438&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.560)&lt;/td&gt;&lt;td&gt;(.630)&lt;/td&gt;&lt;td&gt;(.630)&lt;/td&gt;&lt;td&gt;(.596)&lt;/td&gt;&lt;td&gt;(.596)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_pedigree&lt;/td&gt;&lt;td&gt;1.709&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.535&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.533&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.551&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.551&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.499)&lt;/td&gt;&lt;td&gt;(.484)&lt;/td&gt;&lt;td&gt;(.484)&lt;/td&gt;&lt;td&gt;(.484)&lt;/td&gt;&lt;td&gt;(.484)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;log1p_age&lt;/td&gt;&lt;td&gt;1.159&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.040&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.043&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.027&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;1.027&lt;sup&gt;**&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(.388)&lt;/td&gt;&lt;td&gt;(.376)&lt;/td&gt;&lt;td&gt;(.376)&lt;/td&gt;&lt;td&gt;(.375)&lt;/td&gt;&lt;td&gt;(.375)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;Constant&lt;/td&gt;&lt;td&gt;-38.793&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;-39.345&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;-39.361&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;-38.683&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;td&gt;-38.683&lt;sup&gt;***&lt;/sup&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;(3.208)&lt;/td&gt;&lt;td&gt;(3.234)&lt;/td&gt;&lt;td&gt;(3.235)&lt;/td&gt;&lt;td&gt;(3.170)&lt;/td&gt;&lt;td&gt;(3.170)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;Observations&lt;/td&gt;&lt;td&gt;724&lt;/td&gt;&lt;td&gt;768&lt;/td&gt;&lt;td&gt;768&lt;/td&gt;&lt;td&gt;768&lt;/td&gt;&lt;td&gt;768&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;Log Likelihood&lt;/td&gt;&lt;td&gt;-332.169&lt;/td&gt;&lt;td&gt;-352.851&lt;/td&gt;&lt;td&gt;-352.870&lt;/td&gt;&lt;td&gt;-353.452&lt;/td&gt;&lt;td&gt;-353.452&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;Akaike Inf. Crit.&lt;/td&gt;&lt;td&gt;678.338&lt;/td&gt;&lt;td&gt;723.701&lt;/td&gt;&lt;td&gt;723.740&lt;/td&gt;&lt;td&gt;724.903&lt;/td&gt;&lt;td&gt;724.903&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td colspan="6" style="border-bottom: 1px solid black"&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;em&gt;Notes:&lt;/em&gt;&lt;/td&gt;&lt;td colspan="5" style="text-align:left"&gt;&lt;sup&gt;*&lt;/sup&gt;P &lt; .05&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td colspan="5" style="text-align:left"&gt;&lt;sup&gt;**&lt;/sup&gt;P &lt; .01&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td colspan="5" style="text-align:left"&gt;&lt;sup&gt;***&lt;/sup&gt;P &lt; .001&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td style="text-align:left"&gt;&lt;/td&gt;&lt;td colspan="5" style="text-align:left"&gt;PID fit using complete case and single imputation analysis&lt;/td&gt;&lt;/tr&gt;
+&lt;/table&gt;
+
+
+# Regression imputation
+
+
+```r
+summary(lm(log1p_insulin~.,data=dat_complete))
+
+Call:
+lm(formula = log1p_insulin ~ ., data = dat_complete)
+
+Residuals:
+     Min       1Q   Median       3Q      Max 
+-3.07402 -0.32786 -0.00332  0.34950  1.50801 
+
+Coefficients:
+                 Estimate Std. Error t value Pr(&gt;|t|)    
+(Intercept)    -5.4284331  0.8424177  -6.444  3.5e-10 ***
+log1p_pregnant  0.0009177  0.0481307   0.019 0.984798    
+log1p_glucose   1.6601886  0.1275366  13.017  &lt; 2e-16 ***
+pressure       -0.0034987  0.0023442  -1.493 0.136387    
+triceps        -0.0027364  0.0034601  -0.791 0.429521    
+log1p_mass      0.6199578  0.1837378   3.374 0.000816 ***
+log1p_pedigree  0.0607200  0.1369102   0.444 0.657653    
+log1p_age       0.1268410  0.1366074   0.929 0.353729    
+diabetespos    -0.0050517  0.0693882  -0.073 0.942000    
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+Residual standard error: 0.5252 on 383 degrees of freedom
+Multiple R-squared:  0.429,	Adjusted R-squared:  0.4171 
+F-statistic: 35.97 on 8 and 383 DF,  p-value: &lt; 2.2e-16
+```
+
+
+---
+
+# Regression imputation
+
+
+```r
+imp1 &lt;- shadow_dat %&gt;%
+  impute_lm(log1p_insulin~log1p_glucose+log1p_mass)
+imp2 &lt;- shadow_dat %&gt;%
+  impute_lm(log1p_insulin~log1p_glucose+log1p_mass, add_residual="normal")
+
+# Get the ggarrange function
+suppressPackageStartupMessages(library(ggpubr))
+```
+
+
+---
+
+# Regression imputation
+
+
+```r
+g1 &lt;- imp1 %&gt;%
+  ggplot(aes(x = log1p_glucose, y = log1p_insulin, colour = log1p_insulin_NA )) + 
+  geom_point()
+g2 &lt;- imp2 %&gt;%
+  ggplot(aes(x = log1p_glucose, y = log1p_insulin, colour = log1p_insulin_NA )) + 
+  geom_point()
+
+ggarrange(g1, g2, labels = c("lm impute", "lm impute + noise"), ncol = 2, nrow = 1)
+```
+
+&lt;img src="MissingnessPreso_files/figure-html/unnamed-chunk-18-1.png" style="display: block; margin: auto;" /&gt;
+
+ 
+
+ 
+---
+ 
+# Nearest neighbour imputation
+
+
+```r
+library(DMwR)
+Loading required package: lattice
+Loading required package: grid
+dat_imp1 &lt;- as.tibble(knnImputation(data.matrix(dat),k=1))
+dat_imp2 &lt;- as.tibble(knnImputation(data.matrix(dat),k=2))
+dat_imp3 &lt;- as.tibble(knnImputation(data.matrix(dat),k=3))
+```
+
+---
+
+# Visualizing the imputed values
+
+&lt;img src="MissingnessPreso_files/figure-html/unnamed-chunk-20-1.png" style="display: block; margin: auto;" /&gt;
+
+ 
+---
+
+# Multivariate normal expectation maximization
+
+
+```r
+library(norm)
+
+dat_imp &lt;- dat %&gt;%
+  impute_em(log1p_glucose ~ log1p_insulin + log1p_age) %&gt;%
+  impute_em(pressure ~ log1p_mass + log1p_age)  %&gt;% 
+  impute_em(log1p_insulin ~ log1p_glucose + log1p_mass) %&gt;%
+  impute_em(log1p_mass ~ log1p_pregnant + pressure + triceps + log1p_insulin) %&gt;%
+  impute_em(triceps ~ log1p_mass) 
+
+g1 &lt;- dat_imp %&gt;%
+  ggplot(aes(x = log1p_glucose, y = log1p_insulin, colour = ind_na )) + 
+  geom_point()
+g2 &lt;- dat_imp %&gt;%
+  ggplot(aes(x = triceps, y = log1p_mass, colour = ind_na )) + 
+  geom_point()
+```
+
+---
+
+# Multivariate normal expectation maximization
+
+
+```r
+ggarrange(g1, g2, ncol = 2, nrow = 1)
+```
+
+&lt;img src="MissingnessPreso_files/figure-html/unnamed-chunk-22-1.png" style="display: block; margin: auto;" /&gt;
+---
+
+
+# Multiple imputation
+
+When inference is important then data should be imputed multiple times.
+
+The process to do this is really, really complicated since there are two
+sources of variation
+
+1. Variation from estimation of model parameters (including any in the
+model for the covariates);
+
+2. Variation from the missing values.
+
+Many methods iterate between addressing these to form a Markov chain where the
+imputed values mimic draws from the right (posterior) distribution.
+
+Usually a small number of completed datasets are needed, say `\(m=5\)` is
+often recommended, with 20 iterations between estimating model parameters
+and imputing missing values. Symbolically we impute a matrix 
+`\({\bf X}^{(mis)}\)` that contains missing values and mice outputs `\(m\)`
+complete datasets (containing no missing values)
+$$
+{\bf X}^{(1)},\ldots,{\bf X}^{(m)}.
+$$
+---
+
+# Combining the Results
+
+Suppose that the estimates of `\({\boldsymbol\theta}\)` corresponding to `\({\bf X}^{(1)},\ldots,{\bf X}^{(m)}\)` are
+$$
+\widehat{\boldsymbol\theta}^{(1)}, \ldots, \widehat{\boldsymbol\theta}^{(m)}
+$$
+
+ where the sampling variances for each of the estimates are
+$$
+\widehat{\bf V}^{(1)}, \ldots, \widehat{\bf V}^{(m)}.
+$$
+
+Then the commonly used point estimate for `\({\boldsymbol\theta}\)` is
+$$
+\widehat{\boldsymbol\theta} = \frac{1}{m} \sum_{i=1}^m \widehat{\boldsymbol\theta}^{(i)}
+$$
+
+---
+
+# Combining the Results
+
+The estimated variance of `\(\widehat{\boldsymbol\theta}\)` is
+$$
+\widehat{\mbox{Var}}(\widehat{\boldsymbol\theta}) = \left( 1 + \frac{1}{m} \right) {\bf B} + {\bf W}
+$$
+
+where the between and within variances are:
+$$
+{\bf B} = 
+\frac{1}{m - 1} \sum_{i=1}^m  
+(\widehat{\boldsymbol\theta}^{(i)} - \widehat{\boldsymbol\theta})
+(\widehat{\boldsymbol\theta}^{(i)} - \widehat{\boldsymbol\theta})^T
+$$
+
+and 
+$$
+{\bf W} = \frac{1}{m} \sum_{i=1}^m \widehat{\bf V}^{(i)}.
+$$
+
+---
+
+# Testing Scalars
+
+Suppose that we want to test that `\(\theta_j = \theta_{j0}\)` for a 
+particular `\(j\)`. Rubin (1987) showed that
+&lt;center&gt;
+&lt;img src="latex_3e0b4a7b5217d2354cacab957c7b3ec4.png" style="width:25%"&gt;
+&lt;/center&gt;
+
+
+where
+&lt;center&gt;
+&lt;img src="latex_07e37ad8dd888717e8703062ac307a8c.png" style="width:30%"&gt;
+&lt;/center&gt;
+
+The statistic `\(r_j = (1 + m^{-1}){\bf B}_{jj}/{\bf W}_{jj}\)` can be interpreted 
+as the relative increase in variance due to missing data.  
+
+
+ 
+---
+
+# Multiple imputation - mice
+
+
+```r
+suppressPackageStartupMessages(library(mice))
+
+# airquality has two variables with missing values Ozone and Solar.R
+# Generate 5 complete datasets using the patterm mixture model
+imputed_Data &lt;- mice(airquality, m=5, maxit = 50, method = 'pmm', seed = 1,printFlag = FALSE)
+
+summary(imputed_Data)
+Class: mids
+Number of multiple imputations:  5 
+Imputation methods:
+  Ozone Solar.R    Wind    Temp   Month     Day 
+  "pmm"   "pmm"      ""      ""      ""      "" 
+PredictorMatrix:
+        Ozone Solar.R Wind Temp Month Day
+Ozone       0       1    1    1     1   1
+Solar.R     1       0    1    1     1   1
+Wind        1       1    0    1     1   1
+Temp        1       1    1    0     1   1
+Month       1       1    1    1     0   1
+Day         1       1    1    1     1   0
+```
+
+---
+
+# Multiple imputation - mice
+
+
+```r
+# Get the m=5 different missing values
+head( imputed_Data$imp$Ozone )
+    1  2  3  4  5
+5  14 14 32 37  6
+10 23 41 23 36 24
+25 28 14 19  6  6
+26 18 18 32 13  8
+27 23 13  9 13  7
+32 20 16 63 59 45
+```
+
+---
+
+# Multiple imputation - mice
+
+We can then fit multiple models using each complete dataset
+
+
+```r
+fit &lt;- with(data = imputed_Data, exp = lm(Ozone ~ Solar.R + Wind + Temp )) 
+
+#combine results of all 5 models using Rubin's rule
+combine &lt;- pool(fit)
+kable( summary(combine), digits = 3 )
+```
+
+&lt;table&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:left;"&gt;   &lt;/th&gt;
+   &lt;th style="text-align:right;"&gt; estimate &lt;/th&gt;
+   &lt;th style="text-align:right;"&gt; std.error &lt;/th&gt;
+   &lt;th style="text-align:right;"&gt; statistic &lt;/th&gt;
+   &lt;th style="text-align:right;"&gt; df &lt;/th&gt;
+   &lt;th style="text-align:right;"&gt; p.value &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; (Intercept) &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; -63.626 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 25.807 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; -2.465 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 14.736 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.017 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; Solar.R &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.058 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.022 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 2.629 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 48.773 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.011 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; Wind &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; -3.037 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.718 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; -4.229 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 16.907 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.000 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; Temp &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 1.605 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.262 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 6.120 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 22.349 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 0.000 &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+ 
+
+---
+
+# Other multiple imputation packages
+ 
+The main alternatives to mice are:
+
+* Amelia
+
+* missForest
+
+* Hmisc
+
+* mi
+
+---
+
+# Thank you !
+
+&lt;center&gt;
+&lt;img src="thank_you_dance.gif" style="width:50%"&gt;
+&lt;/center&gt;
+    </textarea>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create({
+"ratio": "16:9",
+"highlightStyle": "github",
+"highlightLangauge": "r",
+"highlightLines": true,
+"countIncrementalSlides": false
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function() {
+  var d = document, s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})();</script>
+
+<script>
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+</script>
+
+<script>
+(function() {
+  var i, text, code, codes = document.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+})();
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>
